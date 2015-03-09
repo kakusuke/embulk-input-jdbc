@@ -1,19 +1,18 @@
 package org.embulk.input;
 
-import java.nio.file.Paths;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.Properties;
-import java.sql.Connection;
-import java.sql.Driver;
-import java.sql.SQLException;
 import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
-import org.embulk.spi.PluginClassLoader;
 import org.embulk.config.Config;
 import org.embulk.config.ConfigDefault;
 import org.embulk.input.jdbc.AbstractJdbcInputPlugin;
 import org.embulk.input.jdbc.JdbcInputConnection;
+import org.embulk.spi.PluginClassLoader;
+
+import java.nio.file.Paths;
+import java.sql.*;
+import java.util.HashSet;
+import java.util.Properties;
+import java.util.Set;
 
 public class JdbcInputPlugin
         extends AbstractJdbcInputPlugin
@@ -86,7 +85,7 @@ public class JdbcInputPlugin
             throw Throwables.propagate(ex);
         }
 
-        Connection con = driver.connect(t.getUrl(), props);
+        Connection con = connect(driver, t.getUrl(), props);
         try {
             JdbcInputConnection c = new JdbcInputConnection(con, t.getSchema().orNull());
             con = null;
@@ -103,5 +102,27 @@ public class JdbcInputPlugin
         // TODO match glob
         PluginClassLoader loader = (PluginClassLoader) getClass().getClassLoader();
         loader.addPath(Paths.get(glob));
+    }
+
+    private final int MAX_RETRY_COUNT = 10;
+    private final int RETRY_INTERVAL = 300;
+    private Connection connect(Driver driver, String url, Properties props) throws SQLException
+    {
+        SQLException oe = null;
+        int count = 0;
+        while(count < MAX_RETRY_COUNT) {
+            count++;
+            try {
+                return driver.connect(url, props);
+            } catch (SQLRecoverableException | SQLTransientException ex) {
+                oe = ex;
+                try {
+                    Thread.sleep(RETRY_INTERVAL);
+                } catch (InterruptedException e) {
+                    Throwables.propagate(e);
+                }
+            }
+        }
+        throw Throwables.propagate(oe);
     }
 }
